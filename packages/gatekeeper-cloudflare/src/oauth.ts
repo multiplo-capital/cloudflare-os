@@ -12,11 +12,20 @@ import { observabilityScopesForResources } from "./resources.js";
 /**
  * Scopes for the AI Gateway billing/BYOK flow: read account details and route inference
  * through the user's own AI Gateway. We deliberately do NOT request "openid" — the dashboard OAuth
- * client isn't permitted it; identity comes from user-details.read (the /user API). offline_access
- * yields a refresh token; account-settings.read is required to enumerate the user's account(s).
+ * client isn't permitted it; identity comes from user-details.read (the /user API).
+ * account-settings.read is required to enumerate the user's account(s).
+ *
+ * LOCAL PATCH (multiplo): "offline_access" removed. Cloudflare permits that scope only to
+ * first-party clients -- wrangler's own token carries it -- and rejects it outright for a
+ * self-managed OAuth client created under Manage Account > OAuth clients:
+ *
+ *   invalid_scope: The OAuth 2.0 Client is not allowed to request scope 'offline_access'.
+ *
+ * The authorization-code grant is still confidential (client_secret_basic + PKCE), so Cloudflare
+ * may return a refresh token regardless. If it does not, `finishOAuthFlow` throws and this
+ * gatekeeper cannot work with a self-managed client at all.
  */
 export const BILLING_SCOPES = [
-  "offline_access",
   "aig.read",
   "aig.run",
   "user-details.read",
@@ -29,11 +38,10 @@ export function persistentScopesForResources(resourceUrlPatterns?: string[]): st
 }
 
 /**
- * Minimal scopes for sign-in only: a refresh token + the /user identity read. Used in "auth" mode
- * (the resulting grant is transient).
+ * Minimal scopes for sign-in only: the /user identity read. Used in "auth" mode (the resulting
+ * grant is transient). See BILLING_SCOPES for why "offline_access" is not requested.
  */
 export const AUTH_SCOPES = [
-  "offline_access",
   "user-details.read",
 ];
 
