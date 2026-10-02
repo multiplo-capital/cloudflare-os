@@ -1471,11 +1471,35 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       this.#provisionMissingAccounts().finally(() => { this.#ensureAccountsPromise = undefined; }));
   }
 
+  // An auto-provisioned account never reconnects, so its stored description would otherwise stay as
+  // it was on the day it was created: a gatekeeper that later starts providing a UI (or stops)
+  // would never show it. Re-describe on every provisioning pass and write only on change.
+  async #refreshAutoProvisionedDescription(rec: ConnectedAccountRecord): Promise<void> {
+    let description: AccountDescription;
+    try {
+      description = await rec.account.describe();
+    } catch (err) {
+      logger.warn("failed to refresh the description of an auto-provisioned account", {
+        event: "account.auto.describe.refresh.failed",
+        vendorId: rec.vendorId, accountId: rec.id, error: err,
+      });
+      return;
+    }
+    if (JSON.stringify(description) === JSON.stringify(rec.description)) return;
+    rec.description = description;
+    this.storage.connectedAccounts.put(rec);
+    logger.info("refreshed the description of an auto-provisioned account", {
+      event: "account.auto.describe.refreshed", vendorId: rec.vendorId, accountId: rec.id,
+    });
+  }
+
   async #provisionMissingAccounts(): Promise<void> {
     // Which vendors already have an auto-provisioned account?
     let provisioned = new Set<string>();
     for (let rec of this.#connectedAccountRecords()) {
-      if (rec.autoProvisioned) provisioned.add(rec.vendorId);
+      if (!rec.autoProvisioned) continue;
+      provisioned.add(rec.vendorId);
+      await this.#refreshAutoProvisionedDescription(rec);
     }
 
     let config = await readAdminConfig(this.env);
