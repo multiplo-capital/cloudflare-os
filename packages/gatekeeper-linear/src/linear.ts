@@ -48,6 +48,7 @@ import type {
   LinearCreateIssueOptions,
   LinearCreateLabelOptions,
 } from "./types";
+export { LinearAppActor } from "./app-actor.js";
 import TYPES_CODE from "./types.txt";
 import LINEAR_LOGO_SVG from "./linear-logo.svg";
 import {
