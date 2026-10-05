@@ -289,6 +289,7 @@ describe('ObserverConfigModal account selection', () => {
     const ensureAccountResources = vi.fn<
       (accountId: number, resourceUrlPatterns: string[]) => Promise<ConnectFlowStart | null>
     >().mockResolvedValue(null)
+    mockConnectPopup()
     const legacy = account(1, 'dan@cloudflare.com')
     const rendered = await render([legacy], {
       api: fakeApi([legacy], { ensureAccountResources }),

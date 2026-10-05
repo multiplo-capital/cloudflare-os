@@ -73,9 +73,19 @@ export type PopupHandoff = { kind: 'connect' | 'login'; nonce: string }
  * flow could never complete, so it is not started, and the popup is closed again.
  */
 export function openDisownedPopup(url: string, name: string, handoff: PopupHandoff): Window {
+  const popup = openBlankPopup(name)
+  sendPopup(popup, url, handoff)
+  return popup
+}
+
+function openBlankPopup(name: string): Window {
   const popup = window.open('', name, 'popup,width=520,height=680')
   if (!popup) throw new Error('Pop-up blocked. Please allow pop-ups and try again.')
   popup.opener = null
+  return popup
+}
+
+function sendPopup(popup: Window, url: string, handoff: PopupHandoff): void {
   try {
     popup.sessionStorage.setItem(HANDOFF_KEY, JSON.stringify(handoff))
   } catch {
@@ -83,7 +93,6 @@ export function openDisownedPopup(url: string, name: string, handoff: PopupHando
     throw new Error('This browser blocks storage in pop-ups, so the flow cannot complete. Allow site data for this site and try again.')
   }
   popup.location.replace(url)
-  return popup
 }
 
 /**
@@ -102,16 +111,40 @@ let lastConnectPopup: Window | null = null
 /**
  * Opens a connect / reconnect / ensure-resources flow as a disowned popup carrying the flow's
  * nonce (see `openDisownedPopup`). The popup redeems the ticket itself on ConnectHandoffPage; the
- * account arrives in this tab through `subscribeConnectedAccounts()`. Throws when the browser
- * blocked the popup.
+ * account arrives in this tab through `subscribeConnectedAccounts()`.
+ *
+ * Takes the flow as the pending RPC rather than its result, and opens the blank popup before
+ * awaiting it: browsers only allow `window.open` close to the click, and Safari stops counting a
+ * click once a network round trip sits in between. Resolves to null, with the popup closed again,
+ * when the flow resolves to none. Throws when the browser blocked the popup or the flow failed.
  */
-export function openConnectWindow(flow: ConnectFlowStart): Window {
+export async function openConnectWindow(
+  pending: PromiseLike<ConnectFlowStart | null | undefined>,
+): Promise<Window | null> {
+  const flow = Promise.resolve(pending)
   if (lastConnectPopup) {
     try { lastConnectPopup.close() } catch { /* cross-origin or already gone */ }
   }
-  const popup = openDisownedPopup(
-    flow.url, uniquePopupName('gadgets-connect'), { kind: 'connect', nonce: flow.nonce })
+  let popup: Window
+  try {
+    popup = openBlankPopup(uniquePopupName('gadgets-connect'))
+  } catch (err) {
+    flow.catch(() => {})
+    throw err
+  }
   lastConnectPopup = popup
+  let started: ConnectFlowStart | null | undefined
+  try {
+    started = await flow
+  } catch (err) {
+    popup.close()
+    throw err
+  }
+  if (!started) {
+    popup.close()
+    return null
+  }
+  sendPopup(popup, started.url, { kind: 'connect', nonce: started.nonce })
   return popup
 }
 
