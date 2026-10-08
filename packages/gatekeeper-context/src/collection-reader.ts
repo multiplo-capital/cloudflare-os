@@ -44,11 +44,20 @@ export class CollectionReader extends WorkerEntrypoint<Cloudflare.Env, Collectio
     return perCollection.flat();
   }
 
-  async read(collectionId: string, path: string): Promise<string | null> {
+  async #requirePublic(collectionId: string): Promise<void> {
     const registries = this.ctx.exports.LibraryRegistryDurableObject;
     if (!(await registries.getByName(this.#domain()).isPublic(collectionId))) {
       throw new Error(`Collection ${collectionId} is not a public collection in this deployment.`);
     }
+  }
+
+  async list(collectionId: string, prefix: string): Promise<string[]> {
+    await this.#requirePublic(collectionId);
+    return (await this.#collection(collectionId).listContextDocuments(prefix)).map((document) => document.path);
+  }
+
+  async read(collectionId: string, path: string): Promise<string | null> {
+    await this.#requirePublic(collectionId);
     const document = await this.#collection(collectionId).getContextDocument(path);
     return document?.body ?? null;
   }
