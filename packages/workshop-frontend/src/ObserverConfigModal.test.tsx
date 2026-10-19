@@ -289,6 +289,8 @@ describe('ObserverConfigModal account selection', () => {
     const ensureAccountResources = vi.fn<
       (accountId: number, resourceUrlPatterns: string[]) => Promise<ConnectFlowStart | null>
     >().mockResolvedValue(null)
+    const popup = mockConnectPopup()
+    const close = vi.spyOn(popup, 'close')
     const legacy = account(1, 'dan@cloudflare.com')
     const rendered = await render([legacy], {
       api: fakeApi([legacy], { ensureAccountResources }),
@@ -301,6 +303,8 @@ describe('ObserverConfigModal account selection', () => {
     const verify = [...rendered.querySelectorAll('button')]
       .find(button => button.textContent === 'Verify and open')
     expect(ensureAccountResources).toHaveBeenCalledWith(1, [DOC_RESOURCE.urlPattern])
+    expect(close).toHaveBeenCalled()
+    expect(popup.location.replace).not.toHaveBeenCalled()
     expect(rendered.textContent).toContain('Ready')
     expect(verify?.disabled).toBe(false)
   })

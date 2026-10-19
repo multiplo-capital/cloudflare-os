@@ -15,9 +15,8 @@ export async function requestAccountResources(
   accountId: number,
   resourceUrlPatterns: string[],
 ): Promise<boolean> {
-  const flow = await api.ensureAccountResources(accountId, resourceUrlPatterns)
-  if (!flow) return true
-  const outcome = await openConnectWindow(flow, api)
+  const outcome = await openConnectWindow(api.ensureAccountResources(accountId, resourceUrlPatterns), api)
+  if (!outcome) return true
   toasts.add({ title: outcome === 'connected' ? 'Access granted.' : 'Grant the additional access in the pop-up window.', variant: 'success' })
   return false
 }
