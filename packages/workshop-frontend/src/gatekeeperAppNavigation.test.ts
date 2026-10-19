@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_GATEKEEPER_APP_PROMPT_LENGTH,
+  MAX_GATEKEEPER_APP_PATH_LENGTH,
   normalizeGatekeeperAppPrompt,
+  parseGatekeeperAppPath,
   parseGatekeeperAppWorkspaceTarget,
 } from "./gatekeeperAppNavigation";
 
@@ -44,5 +46,29 @@ describe("normalizeGatekeeperAppPrompt", () => {
     expect(() =>
       normalizeGatekeeperAppPrompt("x".repeat(MAX_GATEKEEPER_APP_PROMPT_LENGTH + 1)),
     ).toThrow("too long");
+  });
+});
+
+describe("parseGatekeeperAppPath", () => {
+  it.each(["/", "/runs", "/queue/multiplo-capital/app/42", "/rules/no%2Fraw%20sql/abc123"])("accepts %s", (path) => {
+    expect(parseGatekeeperAppPath(path)).toBe(path);
+  });
+
+  it.each([
+    "",
+    "runs",
+    "//evil.example",
+    "/runs/",
+    "/runs//1",
+    "/..",
+    "/runs/../../admin",
+    "/./runs",
+    "/runs?tab=1",
+    "/runs#top",
+    "/runs\\..",
+    `/${"a".repeat(MAX_GATEKEEPER_APP_PATH_LENGTH)}`,
+    42,
+  ])("rejects %j", (path) => {
+    expect(() => parseGatekeeperAppPath(path)).toThrow(TypeError);
   });
 });
