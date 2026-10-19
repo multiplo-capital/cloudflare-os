@@ -9,6 +9,7 @@
 import type { AuthenticatedApi, ConnectFlowStart } from '@gadgets/workshop-shared/api'
 import { AuthPopupCancelledError, NATIVE_AUTH_KEY, openNativeAuthPopup, type AuthPopup } from './features/native-app/authPopup'
 import { nativeConnectCompletion } from './features/native-app/connectSession'
+import { nativeApp } from './features/native-app/nativeApp'
 
 /** Host the backend (and, through the router, every gatekeeper) is served from. */
 export function getBackendHost(): string {
@@ -83,9 +84,17 @@ export function openDisownedPopup(url: string, name: string, handoff: PopupHando
   completeNative: (ticket: string, signal: AbortSignal) => Promise<void>): AuthPopup {
   const native = openNativeAuthPopup(url, completeNative)
   if (native) return native
+  return sendPopup(openBlankPopup(name), url, handoff)
+}
+
+function openBlankPopup(name: string): Window {
   const popup = window.open('', name, 'popup,width=520,height=680')
   if (!popup) throw new Error('Pop-up blocked. Please allow pop-ups and try again.')
   popup.opener = null
+  return popup
+}
+
+function sendPopup(popup: Window, url: string, handoff: PopupHandoff): Window {
   try {
     // about:blank inherits a copy of the opener's storage before we disown it. A stale native
     // relay record must never divert this desktop popup away from its own nonce redemption.
@@ -120,17 +129,55 @@ let lastConnectPopup: AuthPopup | null = null
  * Resolves to `opened` on desktop, or `connected` after native redemption. Rejects when opening,
  * authentication or redemption fails, or the native user cancels. A caller's optional signal
  * closes its pending native popup and cancels redemption/reconnect recovery.
+ *
+ * Takes the flow as the pending RPC rather than its result, and on desktop opens the blank popup
+ * before awaiting it: browsers only allow `window.open` close to the click, and Safari stops
+ * counting a click once a network round trip sits in between. Resolves to null, with the popup
+ * closed again, when the flow resolves to none.
  */
-export async function openConnectWindow(flow: ConnectFlowStart,
+export async function openConnectWindow(
+  pending: ConnectFlowStart | PromiseLike<ConnectFlowStart | null | undefined>,
   api: Pick<AuthenticatedApi, 'completeConnectHandoff'>,
-  signal?: AbortSignal): Promise<'opened' | 'connected'> {
+  signal?: AbortSignal): Promise<'opened' | 'connected' | null> {
   if (signal?.aborted) throw new AuthPopupCancelledError()
   if (lastConnectPopup) {
     try { lastConnectPopup.close() } catch { /* cross-origin or already gone */ }
   }
-  const popup = openDisownedPopup(
-    flow.url, uniquePopupName('gadgets-connect'), { kind: 'connect', nonce: flow.nonce },
-    nativeConnectCompletion(api, flow.nonce))
+  const name = uniquePopupName('gadgets-connect')
+  let blank: Window | null = null
+  let started: ConnectFlowStart | null | undefined
+  if (isPromiseLike(pending)) {
+    const flow = Promise.resolve(pending)
+    if (!nativeApp()?.authentication) {
+      try {
+        blank = openBlankPopup(name)
+      } catch (err) {
+        flow.catch(() => {})
+        throw err
+      }
+      lastConnectPopup = blank
+    }
+    try {
+      started = await flow
+    } catch (err) {
+      blank?.close()
+      throw err
+    }
+    if (signal?.aborted) {
+      blank?.close()
+      throw new AuthPopupCancelledError()
+    }
+  } else {
+    started = pending
+  }
+  if (!started) {
+    blank?.close()
+    return null
+  }
+  const handoff: PopupHandoff = { kind: 'connect', nonce: started.nonce }
+  const popup: AuthPopup = blank
+    ? sendPopup(blank, started.url, handoff)
+    : openDisownedPopup(started.url, name, handoff, nativeConnectCompletion(api, started.nonce))
   lastConnectPopup = popup
   if (!popup.completion) return 'opened'
   const cancel = () => popup.close()
@@ -143,6 +190,10 @@ export async function openConnectWindow(flow: ConnectFlowStart,
   } finally {
     signal?.removeEventListener('abort', cancel)
   }
+}
+
+function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  return typeof (value as PromiseLike<T> | null)?.then === 'function'
 }
 
 /**

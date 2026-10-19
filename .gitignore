@@ -17,6 +17,7 @@ packages/workshop-backend/src/generated/browser-export-page.js
 # (packages/api-schema/scripts/generate.ts --if-stale).
 packages/api-schema/generated/
 packages/api-cli/generated/
+packages/workshop-backend/src/generated/format-blueprints.ts
 
 # TypeScript build info
 *.tsbuildinfo
