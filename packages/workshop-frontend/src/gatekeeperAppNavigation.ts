@@ -1,4 +1,8 @@
 export const MAX_GATEKEEPER_APP_PROMPT_LENGTH = 4_000;
+export const MAX_GATEKEEPER_APP_PATH_LENGTH = 512;
+
+// A URL path with no query or fragment.
+const APP_PATH_PATTERN = /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@%/]*$/;
 
 // A Durable Object ID string, which is what a workspace ID is.
 const WORKSPACE_ID_PATTERN = /^[0-9a-f]{64}$/;
@@ -31,4 +35,19 @@ export function normalizeGatekeeperAppPrompt(value: string): string {
     throw new RangeError("Gatekeeper app prompt is too long.");
   }
   return prompt;
+}
+
+/**
+ * Validates a path a sandboxed gatekeeper app asks to show below its own route, /gatekeepers/$appId.
+ * Empty, `.` and `..` segments are refused so a URL parser cannot fold the path into another route.
+ */
+export function parseGatekeeperAppPath(path: unknown): string {
+  if (typeof path !== "string" || path.length > MAX_GATEKEEPER_APP_PATH_LENGTH || !APP_PATH_PATTERN.test(path)) {
+    throw new TypeError("Invalid gatekeeper app path.");
+  }
+  if (path === "/") return path;
+  if (path.slice(1).split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new TypeError("Invalid gatekeeper app path.");
+  }
+  return path;
 }

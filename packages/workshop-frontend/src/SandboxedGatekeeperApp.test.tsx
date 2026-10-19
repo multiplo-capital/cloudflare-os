@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /* eslint-disable react/react-in-jsx-scope */
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -53,12 +53,35 @@ interface TestHost extends RpcTarget {
   openWorkspace(workspaceId: string, gadgetId?: number): Promise<void>;
   resolveWorkspaceTitles(ids: string[]): Promise<(string | null)[]>;
   openPrompt(prompt: string): Promise<void>;
+  subscribePath(receiver: TestPathReceiver): Promise<string>;
+  navigate(path: string, replace?: boolean): Promise<void>;
 }
 
 class EmptyUi extends RpcTarget {}
 
 class TestThemeReceiver extends RpcTarget implements GatekeeperAppThemeReceiver {
   setTheme(_theme: GatekeeperAppTheme): void {}
+}
+
+class TestPathReceiver extends RpcTarget {
+  readonly paths: string[] = [];
+  setPath(path: string): void {
+    this.paths.push(path);
+  }
+}
+
+function connect(iframe: HTMLIFrameElement): RpcStub<TestHost> {
+  const { port1, port2 } = new MessageChannel();
+  const stub = newMessagePortRpcSession<TestHost>(port1);
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      data: { type: "handshake" },
+      origin: "null",
+      source: iframe.contentWindow,
+      ports: [port2],
+    }),
+  );
+  return stub;
 }
 
 describe("SandboxedGatekeeperApp navigation", () => {
@@ -177,5 +200,61 @@ describe("SandboxedGatekeeperApp navigation", () => {
       await vi.waitFor(() => expect(router.state.location.pathname).toBe("/"));
     });
     expect(router.state.location.search).toEqual({ prompt: "Create a daily brief." });
+  });
+
+  it("gives the app its path, shows its navigations, and sends it back/forward moves", async () => {
+    const frame = {
+      iframeHtml: "<!doctype html><title>Review</title>",
+      ui: new RpcStub(new EmptyUi()),
+    } as unknown as GatekeeperUiFrame;
+    const navigations: [string, boolean][] = [];
+    let moveTo!: (path: string) => void;
+    function Page() {
+      const [path, setPath] = useState("/runs");
+      moveTo = setPath;
+      return (
+        <SandboxedGatekeeperApp
+          frame={frame}
+          gatekeeperVendorId="review"
+          path={path}
+          onNavigate={(next, replace) => {
+            navigations.push([next, replace]);
+            setPath(next);
+          }}
+        />
+      );
+    }
+    const rootRoute = createRootRoute({ component: Page });
+    const router = createRouter({
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+      routeTree: rootRoute.addChildren([createRoute({ getParentRoute: () => rootRoute, path: "/" })]),
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root!.render(<RouterProvider router={router} />));
+    const iframe = container.querySelector("iframe");
+    if (!iframe) throw new Error("Missing gatekeeper iframe");
+    host = connect(iframe);
+
+    const receiver = new TestPathReceiver();
+    await expect(host.subscribePath(receiver)).resolves.toBe("/runs");
+
+    await act(async () => {
+      await host!.navigate("/queue/acme/app/42");
+    });
+    expect(navigations).toEqual([["/queue/acme/app/42", false]]);
+    expect(receiver.paths).toEqual([]);
+
+    await act(async () => {
+      await host!.navigate("/queue/acme/app/42");
+    });
+    expect(navigations).toHaveLength(1);
+
+    await act(async () => moveTo("/rules"));
+    await vi.waitFor(() => expect(receiver.paths).toEqual(["/rules"]));
+
+    await expect(host.navigate("/runs/../../admin")).rejects.toThrow("Invalid gatekeeper app path");
+    expect(navigations).toHaveLength(1);
   });
 });

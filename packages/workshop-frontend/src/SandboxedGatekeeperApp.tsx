@@ -15,6 +15,7 @@ import { forwardTrustedFrameError } from './errorReporting'
 import { useAuthenticatedApi } from './AuthContext'
 import {
   normalizeGatekeeperAppPrompt,
+  parseGatekeeperAppPath,
   parseGatekeeperAppWorkspaceTarget,
   type GatekeeperAppWorkspaceTarget,
 } from './gatekeeperAppNavigation'
@@ -35,6 +36,12 @@ type OpenTarget = (target: GatekeeperAppWorkspaceTarget) => void
 // can no longer see. Deliberately a lookup, not an enumeration: the app learns nothing new.
 type ResolveWorkspaceTitles = (ids: string[]) => Promise<(string | null)[]>
 type OpenPrompt = (prompt: string) => void
+type NavigateApp = (path: string, replace: boolean) => void
+
+// The app's receiver for path changes it did not make itself (back/forward, a pasted link).
+interface GatekeeperAppPathReceiver extends RpcTarget {
+  setPath(path: string): void
+}
 
 type OverlayState = 'full' | null
 
@@ -85,6 +92,9 @@ class GatekeeperAppHostImpl extends RpcTarget {
   readonly #openTarget: OpenTarget
   readonly #openPrompt: OpenPrompt
   readonly #resolveWorkspaceTitles: ResolveWorkspaceTitles
+  readonly #navigate: NavigateApp
+  #path: string
+  #pathReceiver: RpcStub<GatekeeperAppPathReceiver> | null = null
   #presenting = false
   #theme: GatekeeperAppTheme
   #themeReceiver: RpcStub<GatekeeperAppThemeReceiver> | null = null
@@ -100,9 +110,13 @@ class GatekeeperAppHostImpl extends RpcTarget {
     openTarget: OpenTarget,
     openPrompt: OpenPrompt,
     resolveWorkspaceTitles: ResolveWorkspaceTitles,
+    path: string,
+    navigate: NavigateApp,
   ) {
     super()
     this.#theme = theme
+    this.#path = path
+    this.#navigate = navigate
     const { capability: ui, dispose } = createRateLimitedCapability(capability, {
       maxConcurrency: 8,
       maxCallsPerMinute: 600,
@@ -169,6 +183,41 @@ class GatekeeperAppHostImpl extends RpcTarget {
     }
   }
 
+  // The app calls this once to learn its path below /gatekeepers/$appId and register a receiver for
+  // changes it did not make (back/forward). Apps without routes never call it.
+  subscribePath(receiver: RpcStub<GatekeeperAppPathReceiver>): string {
+    this.#pathReceiver?.[Symbol.dispose]?.()
+    this.#pathReceiver = receiver.dup()
+    return this.#path
+  }
+
+  // Show the app's new path in the Workshop URL. The app has already rendered it, so it is not echoed back.
+  navigate(path: string, replace?: boolean): void {
+    const next = parseGatekeeperAppPath(path)
+    if (next === this.#path) return
+    this.#path = next
+    this.#navigate(next, replace === true)
+  }
+
+  #dropPathReceiver(receiver: RpcStub<GatekeeperAppPathReceiver>) {
+    if (this.#pathReceiver !== receiver) return
+    receiver[Symbol.dispose]?.()
+    this.#pathReceiver = null
+  }
+
+  // Push a path the Workshop URL moved to on its own; a no-op for the app's own navigations.
+  updatePath(path: string) {
+    if (path === this.#path) return
+    this.#path = path
+    const receiver = this.#pathReceiver
+    if (!receiver) return
+    try {
+      Promise.resolve(receiver.setPath(path)).catch(() => this.#dropPathReceiver(receiver))
+    } catch {
+      this.#dropPathReceiver(receiver)
+    }
+  }
+
   // Queue a presentation change; the latest requested state is applied on the next frame.
   setPresenting(active: boolean): Promise<PresentAck> {
     return new Promise((resolve) => {
@@ -197,6 +246,8 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#disposeRateLimiter()
     this.#themeReceiver?.[Symbol.dispose]?.()
     this.#themeReceiver = null
+    this.#pathReceiver?.[Symbol.dispose]?.()
+    this.#pathReceiver = null
     if (this.#frameId !== null) {
       cancelAnimationFrame(this.#frameId)
       this.#frameId = null
@@ -216,9 +267,11 @@ class GatekeeperAppHostImpl extends RpcTarget {
  * talks to the gatekeeper only through the `ui` capability carried over the MessagePort RPC session.
  * The iframe fills its parent container.
  */
-export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
+export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path = '/', onNavigate }: {
   frame: GatekeeperUiFrame,
   gatekeeperVendorId: string,
+  path?: string,
+  onNavigate?: NavigateApp,
 }) {
   const navigate = useNavigate()
   const { authenticatedApi } = useAuthenticatedApi()
@@ -237,6 +290,13 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
     : null
   const themeRef = useRef<GatekeeperAppTheme>({ mode: resolvedThemeMode, accentColor })
   themeRef.current = { mode: resolvedThemeMode, accentColor }
+  const pathRef = useRef(path)
+  pathRef.current = path
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
+  useEffect(() => {
+    hostRef.current?.updatePath(path)
+  }, [path])
   useEffect(() => {
     hostRef.current?.updateTheme({ mode: resolvedThemeMode, accentColor })
   }, [resolvedThemeMode, accentColor])
@@ -325,6 +385,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
         openTarget,
         openPrompt,
         resolveWorkspaceTitles,
+        pathRef.current,
+        (next, replace) => onNavigateRef.current?.(next, replace),
       )
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
