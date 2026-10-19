@@ -71,7 +71,7 @@ export default function UsageSettings() {
     try {
       // Connecting (or signing in with) Cloudflare is handled by the Cloudflare gatekeeper. Open its
       // OAuth flow; native redemption triggers the refresh above after focus has already returned.
-      await openConnectWindow(await authenticatedApi.connectAccount('cloudflare', []), authenticatedApi)
+      await openConnectWindow(authenticatedApi.connectAccount('cloudflare', []), authenticatedApi)
     } catch (error) {
       if (error instanceof AuthPopupCancelledError) return
       toasts.add({ title: 'Could not connect Cloudflare',

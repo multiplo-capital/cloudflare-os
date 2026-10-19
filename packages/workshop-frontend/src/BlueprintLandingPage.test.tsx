@@ -54,7 +54,12 @@ vi.mock('@tanstack/react-router', async (importOriginal) => ({
   useRouter: () => ({ history: { back: vi.fn<() => void>(), canGoBack: () => false } }),
 }))
 
-vi.mock('./connectHandoff', () => ({ openConnectWindow }))
+vi.mock('./connectHandoff', () => ({
+  openConnectWindow: async (pending: ConnectFlowStart | PromiseLike<ConnectFlowStart | null>, api: unknown) => {
+    const flow = await pending
+    return flow ? openConnectWindow(flow, api) : null
+  },
+}))
 
 vi.mock('./ResourceConfiguratorHost', async () => {
   const { useEffect } = await import('react')

@@ -71,7 +71,7 @@ export default function OutOfCreditsModal({ open, onClose }: OutOfCreditsModalPr
     if (!auth) return
     setConnecting(true)
     try {
-      await openConnectWindow(await auth.authenticatedApi.connectAccount('cloudflare', []), auth.authenticatedApi)
+      await openConnectWindow(auth.authenticatedApi.connectAccount('cloudflare', []), auth.authenticatedApi)
     } catch (err) {
       if (err instanceof AuthPopupCancelledError) return
       toasts.add({

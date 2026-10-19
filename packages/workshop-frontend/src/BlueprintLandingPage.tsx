@@ -243,8 +243,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     if (!authenticatedApi) return
     setConnectingVendor(vendorId)
     try {
-      const outcome = await openConnectWindow(
-        await authenticatedApi.connectAccount(vendorId, resourceUrlPatterns), authenticatedApi)
+      const outcome = await openConnectWindow(authenticatedApi.connectAccount(vendorId, resourceUrlPatterns), authenticatedApi)
       toasts.add({ title: outcome === 'connected' ? 'Account connected.' : 'Complete the account connection in the pop-up window.', variant: 'success' })
     } catch (err) {
       if (err instanceof AuthPopupCancelledError) return
@@ -262,9 +261,8 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     if (!authenticatedApi || resourceUrlPatterns.length === 0) return
     setGrantingAccountId(accountId)
     try {
-      const flow = await authenticatedApi.ensureAccountResources(accountId, resourceUrlPatterns)
-      if (flow) {
-        const outcome = await openConnectWindow(flow, authenticatedApi)
+      const outcome = await openConnectWindow(authenticatedApi.ensureAccountResources(accountId, resourceUrlPatterns), authenticatedApi)
+      if (outcome) {
         toasts.add({ title: outcome === 'connected' ? 'Access granted.' : 'Grant the additional access in the pop-up window.', variant: 'success' })
       } else {
         const account = accountsRef.current.get(accountId)
@@ -297,7 +295,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     if (!authenticatedApi) return
     setReconnectingAccountId(accountId)
     try {
-      const outcome = await openConnectWindow(await authenticatedApi.reconnectAccount(accountId), authenticatedApi)
+      const outcome = await openConnectWindow(authenticatedApi.reconnectAccount(accountId), authenticatedApi)
       toasts.add({ title: outcome === 'connected' ? 'Account reconnected.' : 'Complete the account reconnect in the pop-up window.', variant: 'success' })
     } catch (err) {
       if (err instanceof AuthPopupCancelledError) { setReconnectingAccountId(null); return }

@@ -30,7 +30,12 @@ const { openConnectWindow } = vi.hoisted(() => ({
   openConnectWindow: vi.fn<(flow: ConnectFlowStart, api: unknown) => Promise<'opened' | 'connected'>>(),
 }))
 
-vi.mock('../connectHandoff', () => ({ openConnectWindow }))
+vi.mock('../connectHandoff', () => ({
+  openConnectWindow: async (pending: ConnectFlowStart | PromiseLike<ConnectFlowStart | null>, api: unknown) => {
+    const flow = await pending
+    return flow ? openConnectWindow(flow, api) : null
+  },
+}))
 
 vi.mock('@cloudflare/kumo', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@cloudflare/kumo')>()),

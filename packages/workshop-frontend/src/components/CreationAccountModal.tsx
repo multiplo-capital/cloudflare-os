@@ -108,8 +108,7 @@ export const CreationAccountModal = ({ overseer, gatekeeperId, onChoose, onCance
   const startFlow = async (flow: StartingFlow, start: () => Promise<ConnectFlowStart | null>) => {
     setStarting(flow)
     try {
-      const started = await start()
-      if (started) await openConnectWindow(started, authenticatedApi)
+      await openConnectWindow(start(), authenticatedApi)
     } catch (err) {
       if (err instanceof AuthPopupCancelledError) return
       console.error('Failed to start connection flow:', err)
