@@ -5,6 +5,31 @@ type Env = Cloudflare.Env & { CLIENT_ID?: string; CLIENT_SECRET?: string };
 
 export type AppActorIssue = { id: string; identifier: string; url: string };
 
+export type AppActorComment = { body: string; createdAt: string };
+
+export type AppActorIssueDetail = AppActorIssue & {
+  title: string;
+  description: string;
+  createdAt: string;
+  open: boolean;
+  comments: AppActorComment[];
+};
+
+type IssueNode = {
+  id: string;
+  identifier: string;
+  url: string;
+  title: string;
+  description: string | null;
+  createdAt: string;
+  state: { type: string };
+  comments: { nodes: AppActorComment[] };
+};
+
+const CLOSED_STATE_TYPES = ["completed", "canceled"];
+const ISSUE_FIELDS = "id identifier url title description createdAt state { type } comments(first: 10) { nodes { body createdAt } }";
+const MAX_LISTED_ISSUES = 500;
+
 const API_BASE = "https://api.linear.app";
 const APP_TOKEN_SCOPES = "read,write";
 
@@ -71,6 +96,35 @@ async function teamId(env: Env, key: string): Promise<string> {
   return team.id;
 }
 
+function detail(node: IssueNode, recentComments: number): AppActorIssueDetail {
+  return {
+    id: node.id,
+    identifier: node.identifier,
+    url: node.url,
+    title: node.title,
+    description: node.description ?? "",
+    createdAt: node.createdAt,
+    open: !CLOSED_STATE_TYPES.includes(node.state.type),
+    comments: node.comments.nodes.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-recentComments),
+  };
+}
+
+async function teamStates(env: Env, issueId: string): Promise<{ id: string; name: string; type: string; position: number }[]> {
+  const data = await graphql<{ issue: { team: { states: { nodes: { id: string; name: string; type: string; position: number }[] } } } }>(
+    env,
+    "query States($id: String!) { issue(id: $id) { team { states { nodes { id name type position } } } } }",
+    { id: issueId },
+  );
+  return data.issue.team.states.nodes.toSorted((a, b) => a.position - b.position);
+}
+
+async function setState(env: Env, issueId: string, stateId: string): Promise<void> {
+  await graphql(env, "mutation Update($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }", {
+    id: issueId,
+    input: { stateId },
+  });
+}
+
 @validateRpc()
 export class LinearAppActor extends WorkerEntrypoint<Env> {
   async createIssue(input: { teamKey: string; title: string; description: string }): Promise<AppActorIssue> {
@@ -94,5 +148,53 @@ export class LinearAppActor extends WorkerEntrypoint<Env> {
     await graphql(this.env, "mutation Comment($input: CommentCreateInput!) { commentCreate(input: $input) { success } }", {
       input: { issueId, body },
     });
+  }
+
+  async listOpenIssues(input: { teamKey: string; titlePrefix: string; recentComments: number }): Promise<AppActorIssueDetail[]> {
+    const issues: AppActorIssueDetail[] = [];
+    let after: string | null = null;
+    do {
+      const data: { issues: { nodes: IssueNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } } } = await graphql(
+        this.env,
+        `query Issues($filter: IssueFilter, $after: String) { issues(filter: $filter, first: 50, after: $after) { nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } } }`,
+        {
+          filter: {
+            team: { key: { eq: input.teamKey } },
+            title: { startsWith: input.titlePrefix },
+            state: { type: { nin: CLOSED_STATE_TYPES } },
+          },
+          after,
+        },
+      );
+      issues.push(...data.issues.nodes.map((node) => detail(node, input.recentComments)));
+      after = data.issues.pageInfo.hasNextPage ? data.issues.pageInfo.endCursor : null;
+    } while (after && issues.length < MAX_LISTED_ISSUES);
+    return issues;
+  }
+
+  async getIssue(id: string, recentComments: number): Promise<AppActorIssueDetail | null> {
+    const data = await graphql<{ issue: IssueNode | null }>(this.env, `query Issue($id: String!) { issue(id: $id) { ${ISSUE_FIELDS} } }`, { id }).catch(
+      (error: unknown) => {
+        if (String(error).includes("Entity not found")) return { issue: null };
+        throw error;
+      },
+    );
+    return data.issue ? detail(data.issue, recentComments) : null;
+  }
+
+  async reopen(id: string): Promise<void> {
+    const states = await teamStates(this.env, id);
+    const state = ["unstarted", "backlog", "triage"].map((type) => states.find((s) => s.type === type)).find(Boolean);
+    if (!state) throw new Error(`Linear has no open state to move ${id} back to.`);
+    await setState(this.env, id, state.id);
+  }
+
+  async markDuplicate(id: string, duplicateOf: string): Promise<void> {
+    await graphql(this.env, "mutation Relate($input: IssueRelationCreateInput!) { issueRelationCreate(input: $input) { success } }", {
+      input: { issueId: id, relatedIssueId: duplicateOf, type: "duplicate" },
+    });
+    const states = await teamStates(this.env, id);
+    const state = states.find((s) => s.type === "canceled" && s.name.toLowerCase() === "duplicate") ?? states.find((s) => s.type === "canceled");
+    if (state) await setState(this.env, id, state.id);
   }
 }
