@@ -35,6 +35,7 @@ const APP_TOKEN_SCOPES = "read,write";
 
 const tokens = new Map<string, Promise<string>>();
 const teams = new Map<string, string>();
+const projects = new Map<string, string>();
 
 async function mintToken(clientId: string, clientSecret: string): Promise<string> {
   const response = await fetch(`${API_BASE}/oauth/token`, {
@@ -109,10 +110,24 @@ function detail(node: IssueNode, recentComments: number): AppActorIssueDetail {
   };
 }
 
-async function teamStates(env: Env, issueId: string): Promise<{ id: string; name: string; type: string; position: number }[]> {
-  const data = await graphql<{ issue: { team: { states: { nodes: { id: string; name: string; type: string; position: number }[] } } } }>(
+async function projectId(env: Env, name: string): Promise<string> {
+  const cached = projects.get(name);
+  if (cached) return cached;
+  const data = await graphql<{ projects: { nodes: { id: string }[] } }>(
     env,
-    "query States($id: String!) { issue(id: $id) { team { states { nodes { id name type position } } } } }",
+    "query Projects($name: String!) { projects(filter: { name: { eq: $name } }) { nodes { id } } }",
+    { name },
+  );
+  const project = data.projects.nodes[0];
+  if (!project) throw new Error(`Linear has no project named ${name}.`);
+  projects.set(name, project.id);
+  return project.id;
+}
+
+async function teamStates(env: Env, issueId: string): Promise<{ id: string; type: string; position: number }[]> {
+  const data = await graphql<{ issue: { team: { states: { nodes: { id: string; type: string; position: number }[] } } } }>(
+    env,
+    "query States($id: String!) { issue(id: $id) { team { states { nodes { id type position } } } } }",
     { id: issueId },
   );
   return data.issue.team.states.nodes.toSorted((a, b) => a.position - b.position);
@@ -127,11 +142,12 @@ async function setState(env: Env, issueId: string, stateId: string): Promise<voi
 
 @validateRpc()
 export class LinearAppActor extends WorkerEntrypoint<Env> {
-  async createIssue(input: { teamKey: string; title: string; description: string }): Promise<AppActorIssue> {
+  async createIssue(input: { teamKey: string; title: string; description: string; projectName?: string }): Promise<AppActorIssue> {
+    const project = input.projectName ? { projectId: await projectId(this.env, input.projectName) } : {};
     const data = await graphql<{ issueCreate: { success: boolean; issue: AppActorIssue | null } }>(
       this.env,
       "mutation Create($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }",
-      { input: { teamId: await teamId(this.env, input.teamKey), title: input.title.slice(0, 250), description: input.description } },
+      { input: { teamId: await teamId(this.env, input.teamKey), title: input.title.slice(0, 250), description: input.description, ...project } },
     );
     if (!data.issueCreate.success || !data.issueCreate.issue) throw new Error("Linear did not create the issue.");
     return data.issueCreate.issue;
@@ -150,7 +166,7 @@ export class LinearAppActor extends WorkerEntrypoint<Env> {
     });
   }
 
-  async listOpenIssues(input: { teamKey: string; titlePrefix: string; recentComments: number }): Promise<AppActorIssueDetail[]> {
+  async listOpenIssues(input: { teamKey: string; projectName: string; recentComments: number }): Promise<AppActorIssueDetail[]> {
     const issues: AppActorIssueDetail[] = [];
     let after: string | null = null;
     do {
@@ -160,7 +176,7 @@ export class LinearAppActor extends WorkerEntrypoint<Env> {
         {
           filter: {
             team: { key: { eq: input.teamKey } },
-            title: { startsWith: input.titlePrefix },
+            project: { name: { eq: input.projectName } },
             state: { type: { nin: CLOSED_STATE_TYPES } },
           },
           after,
@@ -187,14 +203,5 @@ export class LinearAppActor extends WorkerEntrypoint<Env> {
     const state = ["unstarted", "backlog", "triage"].map((type) => states.find((s) => s.type === type)).find(Boolean);
     if (!state) throw new Error(`Linear has no open state to move ${id} back to.`);
     await setState(this.env, id, state.id);
-  }
-
-  async markDuplicate(id: string, duplicateOf: string): Promise<void> {
-    await graphql(this.env, "mutation Relate($input: IssueRelationCreateInput!) { issueRelationCreate(input: $input) { success } }", {
-      input: { issueId: id, relatedIssueId: duplicateOf, type: "duplicate" },
-    });
-    const states = await teamStates(this.env, id);
-    const state = states.find((s) => s.type === "canceled" && s.name.toLowerCase() === "duplicate") ?? states.find((s) => s.type === "canceled");
-    if (state) await setState(this.env, id, state.id);
   }
 }
