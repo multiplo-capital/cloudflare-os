@@ -47,6 +47,8 @@ type OverlayState = 'full' | null
 
 // Upper bound on one workspace-title lookup, matching the app's page size.
 const MAX_RESOLVED_WORKSPACES = 100
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+const DOWNLOAD_NAME = /^[\w.-]{1,120}\.(zip|json|md|txt|csv)$/
 
 // How long one gadget listing is reused across title lookups. The untrusted frame calls this once
 // per page of rows (and could call it in a loop), so the listing is shared rather than repeated.
@@ -153,6 +155,18 @@ class GatekeeperAppHostImpl extends RpcTarget {
 
   openPrompt(prompt: string): void {
     this.#openPrompt(normalizeGatekeeperAppPrompt(prompt))
+  }
+
+  download(name: string, bytes: Uint8Array): void {
+    if (typeof name !== 'string' || !DOWNLOAD_NAME.test(name) || !(bytes instanceof Uint8Array) || bytes.byteLength > MAX_DOWNLOAD_BYTES) {
+      throw new TypeError('Invalid download.')
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = name
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   // The app calls this once to learn the current theme and register a receiver for later changes.
