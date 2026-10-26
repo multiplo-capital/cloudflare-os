@@ -161,7 +161,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     if (typeof name !== 'string' || !DOWNLOAD_NAME.test(name) || !(bytes instanceof Uint8Array) || bytes.byteLength > MAX_DOWNLOAD_BYTES) {
       throw new TypeError('Invalid download.')
     }
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
+    const url = URL.createObjectURL(new Blob([bytes.slice()], { type: 'application/octet-stream' }))
     const link = document.createElement('a')
     link.href = url
     link.download = name
