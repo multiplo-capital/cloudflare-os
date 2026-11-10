@@ -53,6 +53,12 @@ type UserPicker = {
 
 const USER_PICKER_CANCELLED = 'Person selection cancelled. A delivery may already have been accepted.'
 type NavigateApp = (path: string, replace: boolean) => void
+// Fetches the app's frame again. Resolves once the new frame is about to replace this one.
+type RefreshApp = () => Promise<void>
+
+// Posted to the frame after its session was reset under an unchanged document, so the app knows a
+// new handshake will be accepted. A changed document reloads and handshakes on its own.
+const RECONNECT_MESSAGE_TYPE = 'reconnect'
 
 // The app's receiver for path changes it did not make itself (back/forward, a pasted link).
 interface GatekeeperAppPathReceiver extends RpcTarget {
@@ -113,6 +119,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
   readonly #openUserPicker: OpenUserPicker
   readonly #cancelUserPicker: CancelUserPicker
   readonly #navigate: NavigateApp
+  readonly #refresh: RefreshApp
   #path: string
   #pathReceiver: RpcStub<GatekeeperAppPathReceiver> | null = null
   #presenting = false
@@ -134,11 +141,13 @@ class GatekeeperAppHostImpl extends RpcTarget {
     cancelUserPicker: CancelUserPicker,
     path: string,
     navigate: NavigateApp,
+    refresh: RefreshApp,
   ) {
     super()
     this.#theme = theme
     this.#path = path
     this.#navigate = navigate
+    this.#refresh = refresh
     const { capability: ui, dispose } = createRateLimitedCapability(capability, {
       maxConcurrency: 8,
       maxCallsPerMinute: 600,
@@ -260,6 +269,13 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#navigate(next, replace === true)
   }
 
+  // The app calls this when its `ui` capability stopped answering (the gatekeeper was redeployed, or
+  // the capability's session ended). The Workshop fetches the frame again; this session ends when
+  // the new frame replaces it, so the app should not rely on the reply arriving.
+  refresh(): Promise<void> {
+    return this.#refresh()
+  }
+
   #dropPathReceiver(receiver: RpcStub<GatekeeperAppPathReceiver>) {
     if (this.#pathReceiver !== receiver) return
     receiver[Symbol.dispose]?.()
@@ -329,11 +345,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
  * talks to the gatekeeper only through the `ui` capability carried over the MessagePort RPC session.
  * The iframe fills its parent container.
  */
-export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path = '/', onNavigate }: {
+export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path = '/', onNavigate, onRefresh }: {
   frame: GatekeeperUiFrame,
   gatekeeperVendorId: string,
   path?: string,
   onNavigate?: NavigateApp,
+  onRefresh?: RefreshApp,
 }) {
   const navigate = useNavigate()
   const { authenticatedApi } = useAuthenticatedApi()
@@ -362,6 +379,10 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path
   pathRef.current = path
   const onNavigateRef = useRef(onNavigate)
   onNavigateRef.current = onNavigate
+  const onRefreshRef = useRef(onRefresh)
+  onRefreshRef.current = onRefresh
+  // The document the iframe last had a session for; see RECONNECT_MESSAGE_TYPE.
+  const sessionHtmlRef = useRef<string | null>(null)
   useEffect(() => {
     hostRef.current?.updatePath(path)
   }, [path])
@@ -486,6 +507,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path
         cancelUserPicker,
         pathRef.current,
         (next, replace) => onNavigateRef.current?.(next, replace),
+        () => onRefreshRef.current?.() ?? Promise.reject(new Error('This app cannot be refreshed.')),
       )
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
@@ -508,6 +530,10 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path
     }
 
     window.addEventListener('message', handleMessage)
+    if (sessionHtmlRef.current === frame.iframeHtml) {
+      iframeRef.current?.contentWindow?.postMessage({ type: RECONNECT_MESSAGE_TYPE }, '*')
+    }
+    sessionHtmlRef.current = frame.iframeHtml
     return () => {
       window.removeEventListener('message', handleMessage)
       sessionRef.current?.[Symbol.dispose]?.()
