@@ -358,7 +358,6 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path
   const sessionRef = useRef<{ [Symbol.dispose]?(): void } | null>(null)
   const hostRef = useRef<GatekeeperAppHostImpl | null>(null)
   const connectedRef = useRef(false)
-  const invalidatedRef = useRef(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
   // The open picker owns the receiver dup and settles `selectUsers()` on close or cancellation.
   // State drives rendering; the ref lets callbacks check identity before settling, so late
@@ -478,23 +477,21 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path
 
   useEffect(() => {
     connectedRef.current = false
-    invalidatedRef.current = false
 
     const connect = (port: MessagePort) => {
-      if (connectedRef.current) {
-        // A second handshake (e.g. iframe reloaded) invalidates the session.
-        invalidatedRef.current = true
+      if (!capabilityRef.current) {
         port.close()
+        return
+      }
+      // A later handshake from the frame replaces the session. The app sends one when it reloads
+      // or when its session stopped answering, and during a deploy two can cross; refusing the
+      // second left the app with no way back short of reloading the Workshop.
+      if (connectedRef.current) {
         sessionRef.current?.[Symbol.dispose]?.()
         sessionRef.current = null
         hostRef.current?.dispose()
         hostRef.current = null
         setOverlayPhase(null)
-        return
-      }
-      if (invalidatedRef.current || !capabilityRef.current) {
-        port.close()
-        return
       }
       const host = new GatekeeperAppHostImpl(
         capabilityRef.current,
@@ -520,7 +517,6 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path
       // reject — comparing against a concrete window avoids a `source === undefined` edge.
       const frameWindow = iframeRef.current?.contentWindow
       if (!frameWindow || event.source !== frameWindow || event.origin !== 'null') return
-      if (invalidatedRef.current) return
       if (forwardTrustedFrameError(
         event, frameWindow, { surface: 'gatekeeper-app', gatekeeperVendorId },
       )) return

@@ -58,7 +58,8 @@ export default function GatekeeperAppPage({ appId, path, onNavigate }: {
         reportIssue('gatekeeper-app.load', err, {
           gatekeeperVendorId: appId,
         })
-        if (!cancelled) setError(`${err}`)
+        // A frame already on screen stays: its app asks for a refresh until one succeeds.
+        if (!cancelled && !current) setError(`${err}`)
       })
     refreshRef.current = () => {
       if (pending) return pending
