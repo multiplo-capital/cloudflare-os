@@ -2248,7 +2248,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
    * fresh by the caller so admin-gated features reflect the user's current status.
    */
   async startAccountAppUi(
-      accountId: number, options: Pick<AppUiContext, "isAdmin">,
+      accountId: number, options: Pick<AppUiContext, "isAdmin" | "isDeveloper">,
   ): Promise<GatekeeperUiFrame> {
     let record = this.storage.connectedAccounts.get(accountId);
     if (!record?.description.providesUi) throw new Error("No such app.");
@@ -2256,7 +2256,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       props: { selectorUserId: this.ctx.id.toString(), appAccountId: accountId },
     });
     return (record.account as unknown as SingletonAccountStub)
-        .startAppUi({ isAdmin: options.isAdmin, userSelectionExchange });
+        .startAppUi({ isAdmin: options.isAdmin, isDeveloper: options.isDeveloper, userSelectionExchange });
   }
 
   // The account record behind one of this user's gatekeeper apps, or undefined

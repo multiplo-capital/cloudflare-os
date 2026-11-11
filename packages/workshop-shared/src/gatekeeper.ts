@@ -175,6 +175,8 @@ export type AppUiContext = {
   /** Whether the opening user is currently a deployment admin. */
   isAdmin: boolean;
 
+  isDeveloper?: boolean;
+
   /**
    * Redeems the tickets this account's UI receives from the Workshop user
    * picker (via the host's `selectUsers()`); see

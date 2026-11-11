@@ -9,6 +9,7 @@ declare global {
       // Deployment-wide admin usernames: a JSON binding, or the same array as a JSON string
       // (which is what a secret binding, can carry).
       ADMINS?: string[] | string;
+      DEVELOPERS?: string[] | string;
 
       // The Models tab's admin settings a deployment has until an admin changes one: a JSON object
       // of the AdminConfig fields ADMIN_CONFIG_SEED_FIELDS lists, or the same object as a JSON

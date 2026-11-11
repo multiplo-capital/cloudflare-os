@@ -5,7 +5,7 @@ import { PublicApi, ROUTER_TAG_PROBE_PATH, VERSION_PATH, AuthenticatedApi, Overs
 import type { UiFeatureFlags } from "@gadgets/workshop-shared/feature-flags";
 import type { UnreadStateScope } from "@gadgets/workshop-shared/api";
 import { backendVersion, getServerConfig } from "./deployment-config.js";
-import { isDeploymentAdmin, isPasswordAuthEnabled, getAuthGatekeeperAllowlist } from "./auth/config.js";
+import { isDeploymentAdmin, isDeploymentDeveloper, isPasswordAuthEnabled, getAuthGatekeeperAllowlist } from "./auth/config.js";
 import { getAuthVendorBinding } from "./auth/auth-vendors.js";
 import { getUsageInfo } from "./ai-gateway-billing/limits/usage-checker.js";
 import { listConnectedAccounts, selectAccount } from "./ai-gateway-billing/cloudflare/connection-service.js";
@@ -143,6 +143,11 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   #isAdmin(): boolean {
     let name = this.#userId.name;
     return !!name && isDeploymentAdmin(this.env, name);
+  }
+
+  #isDeveloper(): boolean {
+    let name = this.#userId.name;
+    return !!name && isDeploymentDeveloper(this.env, name);
   }
 
   whoami(): Promise<AiChatAuthorInfo> {
@@ -685,7 +690,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     let app = accounts.find(account => account.vendorId === vendorId && account.description.providesUi);
     if (!app) return null;
     // isAdmin is supplied fresh per open so admin-gated features reflect the user's current status.
-    return user.startAccountAppUi(app.accountId, { isAdmin: this.#isAdmin() });
+    return user.startAccountAppUi(app.accountId, { isAdmin: this.#isAdmin(), isDeveloper: this.#isDeveloper() });
   }
 
   async createGatekeeperUserSelection(

@@ -29,21 +29,28 @@ export function hasAuthGatekeepers(env: Cloudflare.Env): boolean {
  * spells it, or by a password username, which is stored lowercased.
  */
 export function isDeploymentAdmin(env: Cloudflare.Env, name: string): boolean {
-  let admins: unknown = env.ADMINS;
-  if (!admins) return false;
+  return listsName(env.ADMINS, "ADMINS", name);
+}
 
-  if (typeof admins === "string") {
-    // Admins should be a JSON binding of array type, but `.env` doesn't actually let you
+export function isDeploymentDeveloper(env: Cloudflare.Env, name: string): boolean {
+  return listsName(env.DEVELOPERS, "DEVELOPERS", name);
+}
+
+function listsName(list: unknown, binding: string, name: string): boolean {
+  if (!list) return false;
+
+  if (typeof list === "string") {
+    // The list should be a JSON binding of array type, but `.env` doesn't actually let you
     // specify JSON bindings, so we also support a string that parses as JSON array.
-    admins = JSON.parse(admins);
+    list = JSON.parse(list);
   }
 
-  if (!Array.isArray(admins)) {
-    throw new TypeError("ADMINS must be configured as an array of usernames.");
+  if (!Array.isArray(list)) {
+    throw new TypeError(`${binding} must be configured as an array of usernames.`);
   }
 
   let lowered = asciiLowerCase(name);
-  return admins.some(admin => typeof admin === "string" && asciiLowerCase(admin) === lowered);
+  return list.some(entry => typeof entry === "string" && asciiLowerCase(entry) === lowered);
 }
 
 // Only ASCII letters are folded: toLowerCase() also folds some other characters onto ASCII ones,
