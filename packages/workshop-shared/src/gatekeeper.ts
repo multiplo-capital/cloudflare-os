@@ -177,6 +177,8 @@ export type AppUiContext = {
 
   isDeveloper?: boolean;
 
+  viewerName?: string;
+
   /**
    * Redeems the tickets this account's UI receives from the Workshop user
    * picker (via the host's `selectUsers()`); see
