@@ -74,6 +74,14 @@ let isConnectionLost = false;
 let probing = false;
 let lastProvenAt = Date.now();
 
+const HIDDEN_IDLE_MS = 5 * 60 * 1000;
+const VISIBLE_IDLE_MS = 15 * 60 * 1000;
+const IDLE_CHECK_MS = 30 * 1000;
+const ACTIVITY_EVENT = 'workshop-activity';
+let idle: { wake: () => void } | null = null;
+let lastActiveAt = Date.now();
+let hiddenAt: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
@@ -131,7 +139,7 @@ async function reconnect(): Promise<RpcStub<PublicApi>> {
 // Subscribers hear exactly twice per outage — lost here, restored in `reconnect` — because
 // `currentStub` is replaced once, by a promise, rather than once per attempt.
 function handleBroken(error: unknown) {
-  if (isConnectionLost) return;  // stale/disposed stub, or recovery already underway
+  if (isConnectionLost || idle) return;  // stale/disposed stub, recovery underway, or idle
   isConnectionLost = true;
 
   console.warn('RPC connection lost:', error);
@@ -149,6 +157,7 @@ function handleBroken(error: unknown) {
 // tab-visible / network-online signals probe the connection instead of letting the user's next
 // action hang on a zombie socket.
 async function probeOnWake() {
+  if (idle) return;
   if (isConnectionLost || probing || Date.now() - lastProvenAt < WAKE_PROBE_MIN_IDLE_MS) return;
   probing = true;
   const suspect = currentStub;
@@ -166,15 +175,68 @@ async function probeOnWake() {
   }
 }
 
+function markActive() {
+  lastActiveAt = Date.now();
+  if (!idle) return;
+  const { wake } = idle;
+  idle = null;
+  console.info('Session resumed after inactivity.');
+  wake();
+}
+
+function sleepSession() {
+  if (idle || isConnectionLost) return;
+  const dropped = currentStub;
+  let wake!: () => void;
+  const woken = new Promise<void>((resolve) => { wake = resolve; });
+  idle = { wake };
+  console.info('Session closed after inactivity.');
+  currentStub = new RpcPromise<PublicApi>(woken.then(() => reconnect()));
+  notifySubscribers();
+  disposeQuietly(dropped);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  const focused = document.activeElement;
+  const silentFrame = focused instanceof HTMLIFrameElement && focused.dataset.reportsActivity !== 'true';
+  const tooLong = document.visibilityState === 'hidden'
+    ? hiddenAt !== null && now - hiddenAt >= HIDDEN_IDLE_MS
+    : !silentFrame && now - lastActiveAt >= VISIBLE_IDLE_MS;
+  if (tooLong) sleepSession();
+}, IDLE_CHECK_MS);
+
+let lastPointerAt = 0;
+const onPointer = () => {
+  const now = Date.now();
+  if (now - lastPointerAt < 5000 && !idle) return;
+  lastPointerAt = now;
+  markActive();
+};
+for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'focus'] as const) {
+  window.addEventListener(type, markActive, { capture: true, passive: true });
+}
+window.addEventListener('pointermove', onPointer, { capture: true, passive: true });
+window.addEventListener('pointerover', onPointer, { capture: true, passive: true });
+window.addEventListener('blur', markActive);
+window.addEventListener(ACTIVITY_EVENT, markActive);
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void probeOnWake();
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now();
+    return;
+  }
+  hiddenAt = null;
+  const wasIdle = idle !== null;
+  markActive();
+  if (!wasIdle) void probeOnWake();
 });
 window.addEventListener('online', () => void probeOnWake());
 
 // Drops a connection that is up, so that handleBroken replaces it as if it had broken: for a
 // socket still talking to a backend that a deploy replaced (see useStaleBackendReconnect).
 function reconnectNow() {
-  if (!isConnectionLost) disposeQuietly(currentStub);
+  if (!isConnectionLost && !idle) disposeQuietly(currentStub);
 }
 
 // Current stub. handleBroken() will replace this on disconnect.

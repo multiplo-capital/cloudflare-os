@@ -517,6 +517,11 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, path
       // reject — comparing against a concrete window avoids a `source === undefined` edge.
       const frameWindow = iframeRef.current?.contentWindow
       if (!frameWindow || event.source !== frameWindow || event.origin !== 'null') return
+      if (event.data?.type === 'activity') {
+        if (iframeRef.current) iframeRef.current.dataset.reportsActivity = 'true'
+        window.dispatchEvent(new Event('workshop-activity'))
+        return
+      }
       if (forwardTrustedFrameError(
         event, frameWindow, { surface: 'gatekeeper-app', gatekeeperVendorId },
       )) return
